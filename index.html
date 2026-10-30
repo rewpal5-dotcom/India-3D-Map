@@ -58,6 +58,7 @@
   </div>
   <div class="tools">
     <button class="tool on" id="rotBtn">⟳ Rotate</button>
+    <button class="tool" id="walkBtn">🚶 Walk</button>
     <button class="tool" id="modeBtn">🗺 States</button>
     <button class="tool" id="resetBtn">Reset</button>
   </div>
@@ -412,6 +413,8 @@ var INDIA = [{"n":"Andaman and Nicobar","p":[[[93.848,7.24],[93.883,7.204],[93.8
     autoRotate = !autoRotate;
     this.classList.toggle("on", autoRotate);
   });
+  document.getElementById("walkBtn").addEventListener("click", function(){ location.href = "./walk.html"; });
+
   document.getElementById("modeBtn").addEventListener("click", function(){
     mode = (mode === "relief") ? "states" : "relief";
     this.textContent = (mode === "relief") ? "🗺 States" : "🛰 Relief";

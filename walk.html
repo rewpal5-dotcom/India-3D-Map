@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Bharat 3D — Walk Mode</title>
+<meta name="theme-color" content="#8ec5e8">
+<style>
+  :root{ --ink:#0d2136; --card:rgba(255,255,255,.86); --line:rgba(13,33,54,.16); --accent:#0f766e; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden;background:#bfe0f2;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans",Arial,sans-serif;
+    -webkit-user-select:none;user-select:none}
+  canvas{display:block;width:100%;height:100%;touch-action:none}
+
+  #hud{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:8px;padding:9px 12px;
+    background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,0))}
+  #hud .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(140deg,#0f766e,#38bdf8);
+    display:grid;place-items:center;color:#fff;font-weight:900;font-size:12px}
+  #hud .t{font-size:13px;font-weight:800;letter-spacing:.2px}
+  #hud .s{font-size:10.5px;color:#4b6b86}
+  #hud .sp{margin-left:auto;display:flex;gap:6px}
+  .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:800;font-size:11.5px;
+    padding:7px 11px;border-radius:10px;cursor:pointer;font-family:inherit;backdrop-filter:blur(6px)}
+  .btn.on{background:linear-gradient(135deg,#0f766e,#38bdf8);color:#fff;border-color:transparent}
+
+  #stick{position:fixed;left:18px;bottom:20px;width:126px;height:126px;border-radius:50%;z-index:6;
+    background:rgba(255,255,255,.35);border:2px solid rgba(13,33,54,.18);touch-action:none}
+  #knob{position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;
+    background:rgba(15,118,110,.85);box-shadow:0 6px 16px rgba(0,0,0,.25)}
+  #acts{position:fixed;right:16px;bottom:20px;z-index:6;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
+  .ab{width:62px;height:62px;border-radius:50%;border:2px solid rgba(13,33,54,.18);background:rgba(255,255,255,.72);
+    color:var(--ink);font-weight:900;font-size:11px;cursor:pointer;backdrop-filter:blur(6px);font-family:inherit}
+  .ab.run{background:rgba(56,189,248,.8);color:#04222f}
+  .ab.jump{width:52px;height:52px;font-size:10px}
+  .ab.act{background:rgba(250,204,21,.92);color:#3b2a00;display:none}
+  .ab.act.on{display:block;animation:pulse 1s infinite}
+  @keyframes pulse{50%{transform:scale(1.07)}}
+
+  #info{position:fixed;left:12px;right:12px;bottom:12px;z-index:8;border:1px solid var(--line);
+    background:rgba(255,255,255,.94);backdrop-filter:blur(10px);border-radius:16px;padding:14px 16px;
+    transform:translateY(140%);transition:transform .25s ease;box-shadow:0 18px 40px rgba(9,30,50,.18)}
+  #info.on{transform:none}
+  #info h3{margin:0 0 3px;font-size:16px}
+  #info p{margin:0;font-size:12px;line-height:1.5;color:#3f5c74}
+  #info .x{position:absolute;top:10px;right:12px;border:0;background:none;font-size:18px;color:#6b8299;cursor:pointer}
+  #tip{position:fixed;left:0;right:0;top:52px;text-align:center;font-size:11.5px;color:#2c5470;z-index:4;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="dot">भा</div>
+  <div>
+    <div class="t" id="areaName">प्राचीन मंदिर परिसर</div>
+    <div class="s" id="areaSub">Khajuraho jaisa mandir · khet · gaon</div>
+  </div>
+  <div class="sp">
+    <button class="btn" id="camBtn">👁 3rd</button>
+    <button class="btn" id="mapBtn">🗺 Map</button>
+  </div>
+</div>
+
+<div id="tip">Joystick se chalein · screen drag se camera ghumayein</div>
+
+<div id="stick"><div id="knob"></div></div>
+<div id="acts">
+  <button class="ab act" id="actBtn">देखें</button>
+  <button class="ab jump" id="jumpBtn">JUMP</button>
+  <button class="ab run" id="runBtn">RUN</button>
+</div>
+
+<div id="info">
+  <button class="x" id="infoClose">×</button>
+  <h3 id="infoTitle">—</h3>
+  <p id="infoBody">—</p>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var cv = document.getElementById("c"), ctx = cv.getContext("2d");
+var DPR = Math.min(2, window.devicePixelRatio || 1);
+var W = 0, H = 0;
+function resize(){
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
+  cv.style.width = W+"px"; cv.style.height = H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize", resize); resize();
+
+/* ================= world ================= */
+var faces = [];      // {p:[[x,y,z]..], c:[r,g,b], n:[nx,ny,nz]}
+var colliders = [];  // {x,z,r}
+var spots = [];      // interactable places
+
+function shade(rgb, k){ return "rgb(" + Math.min(255,rgb[0]*k|0) + "," + Math.min(255,rgb[1]*k|0) + "," + Math.min(255,rgb[2]*k|0) + ")"; }
+
+function addQuad(a,b,c,d,col){
+  faces.push({p:[a,b,c,d], c:col});
+}
+function box(x,y,z,w,h,d,col, shadeTop){
+  // top
+  addQuad([x-w/2,y+h,z-d/2],[x+w/2,y+h,z-d/2],[x+w/2,y+h,z+d/2],[x-w/2,y+h,z+d/2], shadeTop||[col[0]*1.12,col[1]*1.12,col[2]*1.12]);
+  // sides
+  addQuad([x-w/2,y,z-d/2],[x+w/2,y,z-d/2],[x+w/2,y+h,z-d/2],[x-w/2,y+h,z-d/2], [col[0]*0.92,col[1]*0.92,col[2]*0.92]);
+  addQuad([x+w/2,y,z-d/2],[x+w/2,y,z+d/2],[x+w/2,y+h,z+d/2],[x+w/2,y+h,z-d/2], [col[0]*0.78,col[1]*0.78,col[2]*0.78]);
+  addQuad([x+w/2,y,z+d/2],[x-w/2,y,z+d/2],[x-w/2,y+h,z+d/2],[x+w/2,y+h,z+d/2], [col[0]*0.86,col[1]*0.86,col[2]*0.86]);
+  addQuad([x-w/2,y,z+d/2],[x-w/2,y,z-d/2],[x-w/2,y+h,z-d/2],[x-w/2,y+h,z+d/2], [col[0]*0.72,col[1]*0.72,col[2]*0.72]);
+  colliders.push({x:x,z:z,r:Math.max(w,d)/2});
+}
+function pyramid(x,y,z,w,h,d,col){
+  var t=[x, y+h, z];
+  var c1=[x-w/2,y,z-d/2], c2=[x+w/2,y,z-d/2], c3=[x+w/2,y,z+d/2], c4=[x-w/2,y,z+d/2];
+  faces.push({p:[c1,c2,t], c:col});
+  faces.push({p:[c2,c3,t], c:[col[0]*0.88,col[1]*0.88,col[2]*0.88]});
+  faces.push({p:[c3,c4,t], c:[col[0]*0.8,col[1]*0.8,col[2]*0.8]});
+  faces.push({p:[c4,c1,t], c:[col[0]*0.72,col[1]*0.72,col[2]*0.72]});
+}
+
+/* ---------- ground ---------- */
+var GS = 120;                       // ground size
+(function tiles(){
+  var step = 12, n = (GS*2)/step;
+  for (var ix=0; ix<n; ix++){
+    for (var iz=0; iz<n; iz++){
+      var x0 = -GS + ix*step, z0 = -GS + iz*step;
+      var c = ((ix+iz) % 2 === 0) ? [124,178,104] : [122,176,102];
+      addQuad([x0,0,z0],[x0+step,0,z0],[x0+step,0,z0+step],[x0,0,z0+step], c);
+    }
+  }
+})();
+/* fields (yellow-green patches) */
+addQuad([-70,0.02,10],[-24,0.02,10],[-24,0.02,44],[-70,0.02,44], [186,196,92]);
+addQuad([-70,0.02,46],[-24,0.02,46],[-24,0.02,78],[-70,0.02,78], [150,186,96]);
+/* path (sand) */
+addQuad([-6,0.03,-80],[6,0.03,-80],[6,0.03,60],[-6,0.03,60], [206,186,148]);
+/* river strip */
+addQuad([24,0.02,-90],[44,0.02,-90],[44,0.02,90],[24,0.02,90], [86,150,196]);
+addQuad([26,0.025,-90],[42,0.025,-90],[42,0.025,90],[26,0.025,90], [110,175,215]);
+
+/* ---------- temple (Khajuraho style) ---------- */
+(function temple(tx, tz){
+  box(tx, 0, tz, 26, 2.2, 26, [214,196,168]);          // plinth
+  box(tx, 2.2, tz, 18, 7, 18, [226,208,178]);          // main body
+  box(tx, 9.2, tz, 13, 3.4, 13, [232,214,184]);        // upper
+  box(tx, 12.6, tz, 9, 3, 9, [236,220,190]);
+  box(tx, 15.6, tz, 6, 3, 6, [238,224,196]);
+  pyramid(tx, 18.6, tz, 6.4, 7.5, 6.4, [206,168,120]); // shikhara tip
+  box(tx, 26, tz, 0.5, 4, 0.5, [120,110,100]);          // flag pole
+  faces.push({p:[[tx,30,tz],[tx+2.4,29.2,tz],[tx,28.6,tz]], c:[228,110,60]}); // flag
+  spots.push({x:tx, z:tz, r:17, name:"प्राचीन मंदिर", body:"Khajuraho jaise mandir — shikhara, plinth aur darpan. Aap yahan charan (mandap) tak chal sakte hain."});
+  colliders.push({x:tx, z:tz, r:11});
+})(0, -24);
+
+/* ---------- small shrine ---------- */
+(function(tx,tz){
+  box(tx,0,tz,7,1.2,7,[210,192,164]);
+  box(tx,1.2,tz,4.6,3.6,4.6,[226,208,178]);
+  pyramid(tx,4.8,tz,5.2,3.4,5.2,[202,164,118]);
+  spots.push({x:tx,z:tz,r:6,name:"छोटा मंदिर", body:"Gram devta ka chhota mandir — gaon ke log yahan puja karte hain."});
+})(22, -8);
+
+/* ---------- huts (village) ---------- */
+var hutPos = [[-34,-2],[-44,-14],[-52,4],[-40,22],[-30,34],[-56,-24],[-22,-40]];
+hutPos.forEach(function(p, i){
+  var x=p[0], z=p[1];
+  box(x, 0, z, 7, 3.2, 6, [206,178,138]);
+  pyramid(x, 3.2, z, 8.4, 3.2, 7.2, [176,124,84]);
+  box(x+2.6, 0, z+1.4, 1.1, 2.1, 1.1, [150,120,92]);   // door frame hint
+});
+spots.push({x:-40, z:8, r:16, name:"पुराना गाँव", body:"Mitti ke ghar, kachcha aangan, charpai aur bullock cart — puraane gaon ka drishya."});
+
+/* ---------- trees ---------- */
+function tree(x,z,s){
+  s = s || 1;
+  box(x,0,z,0.9*s,4*s,0.9*s,[124,90,58]);
+  pyramid(x, 4*s, z, 5*s, 4.4*s, 5*s, [64,132,72]);
+  pyramid(x, 6.4*s, z, 3.6*s, 3.4*s, 3.6*s, [78,150,84]);
+  colliders.push({x:x, z:z, r:1.4*s});
+}
+var trees = [[-14,-10,1.1],[-18,-34,1],[-8,-52,1.2],[12,-42,1],[30,-36,1.1],[36,-20,1],[-64,-6,1.2],
+             [-66,26,1],[-58,50,1.1],[-30,54,1],[8,42,1.1],[18,26,1],[-46,-36,1],[46,10,1.1],[40,44,1]];
+trees.forEach(function(t){ tree(t[0],t[1],t[2]); });
+
+/* ---------- well, cart, boat, rocks ---------- */
+box(-16, 0, 12, 4, 1.6, 4, [186,176,164]);
+box(-16, 1.6, 12, 3.2, 0.4, 3.2, [96,140,180]);
+spots.push({x:-16,z:12,r:5,name:"कुआँ", body:"Puraana kuan — gaon ki paani ki jagah."});
+
+box(-26, 0, 20, 5, 0.8, 3, [150,112,70]);          // cart bed
+box(-26, 0.8, 20, 0.5, 1.6, 3, [130,96,60]);
+box(-28.4, 0, 20, 2.4, 0.6, 0.6, [110,84,54]);     // shafts
+spots.push({x:-26,z:20,r:6,name:"बैलगाड़ी", body:"Lakdi ki bailgaadi — kheti ka puraana saathi."});
+
+box(33, 0, -46, 7, 1.1, 2.6, [140,104,66]);        // boat
+pyramid(33, 1.1, -46, 3.4, 1.4, 2.2, [160,124,80]);
+spots.push({x:33,z:-46,r:7,name:"नाव (घाट)", body:"Nadi ke ghat par lakdi ki naav — chappu se chalayi jaati hai."});
+
+[[-10,30,1.6],[14,8,1.2],[26,20,1.4],[-52,-30,1.3]].forEach(function(r){
+  pyramid(r[0], 0, r[1], r[2]*2, r[2], r[2]*2, [150,150,146]);
+  colliders.push({x:r[0],z:r[1],r:r[2]});
+});
+
+/* ================= player ================= */
+var player = { x: 0, z: 40, y: 0, dir: Math.PI, speed: 7.5, run: false, vy: 0, onGround: true, walk: 0 };
+var cam = { yaw: Math.PI, pitch: 0.36, dist: 26, fps: false };
+
+/* ================= camera / projection ================= */
+var viewPitch = -0.32;
+function projectPoint(x, y, z){
+  var dx = x - camPos.x, dy = y - camPos.y, dz = z - camPos.z;
+  var cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  var rx = dx*cy - dz*sy;
+  var rz = dx*sy + dz*cy;
+  var cp = Math.cos(viewPitch), sp = Math.sin(viewPitch);
+  var ry = dy*cp - rz*sp;
+  var rzz = dy*sp + rz*cp;
+  if (rzz < 0.6) return null;
+  var f = Math.min(W, H) * 1.28;
+  var s = f / rzz;
+  return { x: W/2 + rx*s, y: H/2 - ry*s, d: rzz };
+}
+
+var camPos = {x:0,y:0,z:0};
+function updateCamera(){
+  var p = Math.max(0.05, Math.min(1.2, cam.pitch));
+  if (cam.fps){
+    camPos.x = player.x;
+    camPos.z = player.z;
+    camPos.y = player.y + 5.4;
+    viewPitch = -p;                       // look where the user tilts
+  } else {
+    var horiz = Math.cos(p) * cam.dist;
+    var vert  = Math.sin(p) * cam.dist;
+    camPos.x = player.x - Math.sin(cam.yaw) * horiz;
+    camPos.z = player.z - Math.cos(cam.yaw) * horiz;
+    camPos.y = player.y + 4.6 + vert;
+    viewPitch = -Math.atan2(vert, horiz);  // always aim at the character
+  }
+}
+
+/* ================= render ================= */
+function draw(){
+  /* sky */
+  var sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0, "#8ec5e8");
+  sky.addColorStop(0.55, "#cfe6f4");
+  sky.addColorStop(1, "#eaf3ea");
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+
+  updateCamera();
+
+  var list = [];
+  for (var i=0;i<faces.length;i++){
+    var f = faces[i], pts = [], ok = true, depth = 0;
+    for (var j=0;j<f.p.length;j++){
+      var pr = projectPoint(f.p[j][0], f.p[j][1], f.p[j][2]);
+      if (!pr){ ok = false; break; }
+      pts.push(pr); depth += pr.d;
+    }
+    if (!ok) continue;
+    list.push({pts:pts, c:f.c, d:depth/pts.length});
+  }
+  list.sort(function(a,b){ return b.d - a.d; });
+
+  for (var k=0;k<list.length;k++){
+    var it = list[k];
+    ctx.beginPath();
+    ctx.moveTo(it.pts[0].x, it.pts[0].y);
+    for (var m=1;m<it.pts.length;m++) ctx.lineTo(it.pts[m].x, it.pts[m].y);
+    ctx.closePath();
+    ctx.fillStyle = "rgb(" + (it.c[0]|0) + "," + (it.c[1]|0) + "," + (it.c[2]|0) + ")";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.05)";
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  if (!cam.fps) drawCharacter();
+  drawMarkers();
+}
+
+/* ---------- character ---------- */
+function drawCharacter(){
+  var bob = Math.sin(player.walk*2) * 0.18;
+  var swing = Math.sin(player.walk*2) * 0.9;
+  var base = player.y + bob;
+  var x = player.x, z = player.z;
+
+  function part(px, py, pz, w, h, d, col, rotZ){
+    var c = Math.cos(player.dir), s = Math.sin(player.dir);
+    function rot(lx, lz){ return [x + lx*c - lz*s, z + lx*s + lz*c]; }
+    var cx = Math.cos(rotZ||0), sx = Math.sin(rotZ||0);
+    var corners = [[-w/2,-d/2],[w/2,-d/2],[w/2,d/2],[-w/2,d/2]];
+    var top = [], bot = [];
+    corners.forEach(function(p){
+      var rx = p[0]*cx - 0*p[0];
+      var r2 = rot(p[0], p[1]);
+      top.push([r2[0], base+py+h, r2[1]]);
+      bot.push([r2[0], base+py, r2[1]]);
+    });
+    var q = [[top[0],top[1],top[2],top[3]], [bot[0],bot[1],bot[2],bot[3]],
+             [bot[0],top[0],top[1],bot[1]], [bot[1],top[1],top[2],bot[2]],
+             [bot[2],top[2],top[3],bot[3]], [bot[3],top[3],top[0],bot[0]]];
+    var cols = [col, [col[0]*0.7,col[1]*0.7,col[2]*0.7], [col[0]*0.92,col[1]*0.92,col[2]*0.92],
+                [col[0]*0.78,col[1]*0.78,col[2]*0.78], [col[0]*0.86,col[1]*0.86,col[2]*0.86], [col[0]*0.72,col[1]*0.72,col[2]*0.72]];
+    var out = [];
+    q.forEach(function(face, idx){
+      var pts = [], dep = 0, ok = true;
+      face.forEach(function(pt){
+        var pr = projectPoint(pt[0], pt[1], pt[2]);
+        if (!pr){ ok = false; return; }
+        pts.push(pr); dep += pr.d;
+      });
+      if (ok) out.push({pts:pts, c:cols[idx], d:dep/4});
+    });
+    out.sort(function(a,b){ return b.d - a.d; });
+    out.forEach(function(f){
+      ctx.beginPath();
+      ctx.moveTo(f.pts[0].x, f.pts[0].y);
+      for (var i=1;i<f.pts.length;i++) ctx.lineTo(f.pts[i].x, f.pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle = "rgb(" + (f.c[0]|0) + "," + (f.c[1]|0) + "," + (f.c[2]|0) + ")";
+      ctx.fill();
+    });
+  }
+
+  /* shadow */
+  var shp = projectPoint(player.x, 0.05, player.z);
+  if (shp){
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.ellipse(shp.x, shp.y, 26*shp.d/22, 10*shp.d/22, 0, 0, Math.PI*2);
+    ctx.fillStyle = "#1b3a22"; ctx.fill();
+    ctx.restore();
+  }
+
+  /* legs (dhoti bottom + feet) */
+  part(-0.42, 0, 0, 0.62, 1.5 + swing*0.18, 0.62, [236,230,214]);
+  part( 0.42, 0, 0, 0.62, 1.5 - swing*0.18, 0.62, [236,230,214]);
+  /* kurta (torso) */
+  part(0, 1.5, 0, 1.7, 2.4, 1.0, [240,235,222]);
+  /* arms */
+  part(-1.16, 2.1, 0, 0.46, 1.9, 0.46, [216,176,146]);
+  part( 1.16, 2.1, 0, 0.46, 1.9, 0.46, [216,176,146]);
+  /* head */
+  part(0, 3.9, 0, 1.05, 1.05, 1.0, [226,188,154]);
+  /* turban */
+  part(0, 4.95, 0, 1.2, 0.5, 1.15, [198,86,62]);
+}
+
+/* ---------- markers (labels for nearby places) ---------- */
+function drawMarkers(){
+  for (var i=0;i<spots.length;i++){
+    var sp = spots[i];
+    var pr = projectPoint(sp.x, 6, sp.z);
+    if (!pr) continue;
+    var dist = Math.hypot(sp.x-player.x, sp.z-player.z);
+    if (dist > 46) continue;
+    var alpha = Math.max(0.25, 1 - dist/46);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(pr.x, pr.y, 9, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.fill();
+    ctx.beginPath();
+    ctx.arc(pr.x, pr.y, 4.5, 0, Math.PI*2);
+    ctx.fillStyle = "#0f766e"; ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ================= input ================= */
+var keys = {};
+window.addEventListener("keydown", function(e){ keys[e.key.toLowerCase()] = true; });
+window.addEventListener("keyup", function(e){ keys[e.key.toLowerCase()] = false; });
+
+/* joystick */
+var stick = document.getElementById("stick"), knob = document.getElementById("knob");
+var jx = 0, jz = 0, stickId = null;
+function setKnob(dx, dz){
+  var r = 44, len = Math.hypot(dx,dz);
+  if (len > r){ dx = dx/len*r; dz = dz/len*r; }
+  knob.style.transform = "translate(" + dx + "px," + dz + "px)";
+  jx = dx/r; jz = dz/r;
+}
+function stickStart(e){
+  var t = e.touches ? e.touches[0] : e;
+  stickId = t.identifier !== undefined ? t.identifier : "m";
+  stickMove(e);
+}
+function stickMove(e){
+  var t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+  var r = stick.getBoundingClientRect();
+  setKnob(t.clientX - (r.left + r.width/2), t.clientY - (r.top + r.height/2));
+}
+function stickEnd(){ setKnob(0,0); stickId = null; }
+stick.addEventListener("touchstart", function(e){ e.preventDefault(); stickStart(e); }, {passive:false});
+stick.addEventListener("touchmove", function(e){ e.preventDefault(); stickMove(e); }, {passive:false});
+stick.addEventListener("touchend", function(e){ e.preventDefault(); stickEnd(); }, {passive:false});
+stick.addEventListener("mousedown", function(e){ stickStart(e); });
+window.addEventListener("mousemove", function(e){ if (stickId === "m") stickMove(e); });
+window.addEventListener("mouseup", function(){ if (stickId === "m") stickEnd(); });
+
+/* camera drag */
+var drag = false, lastX = 0, lastY = 0;
+cv.addEventListener("touchstart", function(e){
+  if (e.touches.length === 1){ drag = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }
+}, {passive:true});
+cv.addEventListener("touchmove", function(e){
+  if (drag && e.touches.length === 1){
+    var dx = e.touches[0].clientX - lastX, dy = e.touches[0].clientY - lastY;
+    cam.yaw -= dx * 0.006;
+    cam.pitch = Math.max(-0.2, Math.min(1.1, cam.pitch + dy * 0.004));
+    lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+  }
+}, {passive:true});
+cv.addEventListener("touchend", function(){ drag = false; }, {passive:true});
+cv.addEventListener("mousedown", function(e){ drag = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener("mousemove", function(e){
+  if (!drag) return;
+  cam.yaw -= (e.clientX - lastX) * 0.006;
+  cam.pitch = Math.max(-0.2, Math.min(1.1, cam.pitch + (e.clientY - lastY) * 0.004));
+  lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener("mouseup", function(){ drag = false; });
+
+/* buttons */
+var runBtn = document.getElementById("runBtn");
+runBtn.addEventListener("click", function(){ player.run = !player.run; runBtn.classList.toggle("on", player.run); });
+document.getElementById("jumpBtn").addEventListener("click", function(){
+  if (player.onGround){ player.vy = 8.5; player.onGround = false; }
+});
+document.getElementById("camBtn").addEventListener("click", function(){
+  cam.fps = !cam.fps;
+  this.textContent = cam.fps ? "👁 1st" : "👁 3rd";
+  this.classList.toggle("on", cam.fps);
+});
+document.getElementById("mapBtn").addEventListener("click", function(){ location.href = "./index.html"; });
+document.getElementById("infoClose").addEventListener("click", function(){
+  document.getElementById("info").classList.remove("on");
+});
+
+var actBtn = document.getElementById("actBtn");
+var nearSpot = null;
+actBtn.addEventListener("click", function(){
+  if (!nearSpot) return;
+  document.getElementById("infoTitle").textContent = nearSpot.name;
+  document.getElementById("infoBody").textContent = nearSpot.body;
+  document.getElementById("info").classList.add("on");
+});
+
+/* ================= loop ================= */
+var last = performance.now();
+function loop(t){
+  var dt = Math.min(0.05, (t - last)/1000); last = t;
+
+  /* movement input */
+  var mx = jx, mz = jz;
+  if (keys["w"] || keys["arrowup"]) mz = -1;
+  if (keys["s"] || keys["arrowdown"]) mz = 1;
+  if (keys["a"] || keys["arrowleft"]) mx = -1;
+  if (keys["d"] || keys["arrowright"]) mx = 1;
+
+  var mag = Math.hypot(mx, mz);
+  if (mag > 0.12){
+    mx /= mag; mz /= mag;
+    var spd = player.speed * (player.run ? 1.75 : 1);
+    var sinY = Math.sin(cam.yaw), cosY = Math.cos(cam.yaw);
+    var dx = (mx * cosY - mz * sinY) * spd * dt;
+    var dz = (mx * sinY + mz * cosY) * spd * dt;
+
+    var nx = player.x + dx, nz = player.z + dz;
+    /* collide */
+    for (var i=0;i<colliders.length;i++){
+      var c = colliders[i];
+      var d = Math.hypot(nx-c.x, nz-c.z);
+      if (d < c.r + 1.1){
+        var ang = Math.atan2(nz-c.z, nx-c.x);
+        nx = c.x + Math.cos(ang)*(c.r+1.1);
+        nz = c.z + Math.sin(ang)*(c.r+1.1);
+      }
+    }
+    player.x = Math.max(-GS+4, Math.min(GS-4, nx));
+    player.z = Math.max(-GS+4, Math.min(GS-4, nz));
+    player.dir = Math.atan2(dx, dz);
+    player.walk += dt * (player.run ? 12 : 7);
+  } else {
+    player.walk += dt * 1.2;
+  }
+
+  /* jump */
+  if (!player.onGround){
+    player.vy -= 22 * dt;
+    player.y += player.vy * dt;
+    if (player.y <= 0){ player.y = 0; player.vy = 0; player.onGround = true; }
+  }
+
+  /* nearest interactable */
+  nearSpot = null;
+  var best = 1e9;
+  for (var s=0;s<spots.length;s++){
+    var dd = Math.hypot(spots[s].x-player.x, spots[s].z-player.z);
+    if (dd < spots[s].r && dd < best){ best = dd; nearSpot = spots[s]; }
+  }
+  actBtn.classList.toggle("on", !!nearSpot);
+
+  draw();
+  requestAnimationFrame(loop);
+}
+window.__dbg = function(){
+  return { camPos: camPos, player: player, viewPitch: viewPitch, cam: cam,
+           faces: faces.length, spots: spots.length };
+};
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
